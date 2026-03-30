@@ -1,155 +1,153 @@
 import os
 import re
-import time
 from datetime import datetime
+from PIL import Image, ImageDraw, ImageFont
+import telebot
+from telebot import types
 
-# --- COLORS (Enhanced) ---
-G = '\033[92m'  # Green (Pass)
-Y = '\033[93m'  # Yellow (Warning)
-W = '\033[0m'   # White
-B = '\033[94m'  # Blue
-R = '\033[91m'  # Red (Fail)
-C = '\033[96m'  # Cyan
-M = '\033[95m'  # Magenta
-CY = '\033[1;36m' # Bold Cyan
-
+# --- ⚙️ CONFIGURATION ---
+TOKEN = "8733244182:AAHe3TQ-nYOYCrcjQnwzfZD4cZUTsU2q3sM"
 DATA_DIR = "./data"
+FONT_PATH = "font_bold.ttf"
+bot = telebot.TeleBot(TOKEN)
 
-MARKET_CONF = {
-    "MILAN": {"mult": 10, "pos": "TAIL"},
-    "SRIDEVI": {"mult": 1, "pos": "HEAD"},
-    "TIME-BAZAR": {"mult": 14, "pos": "TAIL"},
-    "KALYAN": {"mult": 20, "pos": "HEAD"}
-}
+# 🎯 LOCKED BHARAMASTRA FORMULAS
+MARKET_FORMULAS = {"SRIDEVI": 8, "MILAN": 6, "TIME-BAZAR": 17, "KALYAN": 5}
+MARKET_COLORS = {"SRIDEVI": "#00FFCC", "MILAN": "#FF9900", "TIME-BAZAR": "#FF00FF", "KALYAN": "#0099FF"}
 
-def load_data(filename):
-    path = os.path.join(DATA_DIR, filename)
-    recs = []
-    if not os.path.exists(path): return None
+# --- 🧠 PHASE 4 SCANNING ENGINE ---
+def get_phase4_prediction(m_name):
+    filepath = os.path.join(DATA_DIR, f"{m_name}.txt")
+    if not os.path.exists(filepath): return None
+    records = []
     try:
-        with open(path, 'r') as f:
+        with open(filepath, 'r') as f:
             for line in f:
                 if "***" in line or not line.strip(): continue
                 parts = line.split('/')
                 if len(parts) >= 2:
                     match = re.search(r'-\s*(\d{2})\s*-', parts[1])
-                    if match:
-                        val = int(match.group(1))
-                        recs.append({'date': parts[0].strip()[:5], 'jodi': match.group(1), 'val': val})
+                    if match: records.append(int(match.group(1)))
     except: return None
-    return recs
 
-def get_otc(p1, p2, mult, pos):
-    val = p1 * p2 * mult
-    calc = str(val).zfill(4)
-    target = calc[:2] if pos == "HEAD" else calc[-2:]
-    d1, d2 = int(target[0]), int(target[1])
-    return sorted(list(set([d1, d2, (d1+5)%10, (d2+5)%10])))
+    if len(records) < 5: return None
+    mult = MARKET_FORMULAS.get(m_name, 5)
+    gap_scores = {g: 0 for g in range(10)}
+    for i in range(len(records) - 1):
+        res = str(records[i] * mult).zfill(2)
+        d1, d2 = int(res[-2]), int(res[-1])
+        next_j = str(records[i+1]).zfill(2)
+        for g in range(10):
+            if next_j in [f"{d1}{(d1+g)%10}", f"{d2}{(d2+g)%10}"]:
+                gap_scores[g] += 1
 
-def get_market_accuracy(filename):
-    data = load_data(filename)
-    if not data or len(data) < 10: return 0
-    m_name = filename.replace('.txt', '').upper()
-    conf = MARKET_CONF.get(m_name, {"mult": 1, "pos": "HEAD"})
-    pass_count = 0
-    test_range = data[-10:]
-    for i in range(len(test_range)):
-        idx = (len(data) - len(test_range)) + i
-        if idx < 2: continue
-        curr = data[idx]
-        p1, p2 = data[idx-1]['val'], data[idx-2]['val']
-        otc = get_otc(p1, p2, conf['mult'], conf['pos'])
-        if any(str(d) in curr['jodi'] for d in otc): pass_count += 1
-    return (pass_count / len(test_range)) * 100
+    top_4_gaps = [g for g, p in sorted(gap_scores.items(), key=lambda x: x[1], reverse=True)[:4]]
+    last_jodi = records[-1]
+    res_now = str(last_jodi * mult).zfill(2)
+    otc1, otc2 = res_now[-2], res_now[-1]
 
-def main():
-    while True:
-        os.system('clear')
-        now = datetime.now().strftime("%d-%m-%Y | %I:%M %p")
-        
-        # --- MAIN BANNER ---
-        print(f"{M}╔{'═'*60}╗{W}")
-        print(f"{M}║{CY}   ⚡ JARVIS v16.0 ULTRA MAXX ⚡   {M}║   {Y}{now}{W}")
-        print(f"{M}╚{'═'*60}╝{W}")
+    jodis = []
+    for g in top_4_gaps:
+        jodis.append(f"{otc1}{(int(otc1)+g)%10}")
+        if otc1 != otc2: jodis.append(f"{otc2}{(int(otc2)+g)%10}")
 
-        files = [f for f in os.listdir(DATA_DIR) if f.endswith('.txt')]
-        
-        print(f"\n{B}┌{'─'*15}┬{'─'*25}┬{'─'*15}┐{W}")
-        print(f"{B}│  ID  │      MARKET NAME        │  ACCURACY     │{W}")
-        print(f"{B}├{'─'*15}┼{'─'*25}┼{'─'*15}┤{W}")
+    return {
+        "name": m_name, "otc": [otc1, otc2], "jodis": jodis[:8],
+        "color": MARKET_COLORS.get(m_name, "#FFFFFF"), "ref": str(last_jodi).zfill(2)
+    }
 
-        for i, f in enumerate(files, 1):
-            acc = get_market_accuracy(f)
-            acc_color = G if acc >= 70 else (Y if acc >= 40 else R)
-            m_display = f.replace('.txt', '').upper()
-            print(f"{B}│ {W} [{i}]  {B}│{W} {m_display:<23} {B}│{acc_color}   {acc:>5.1f}%     {B}│{W}")
-        
-        print(f"{B}└{'─'*15}┴{'─'*25}┴{'─'*15}┘{W}")
-        
-        choice = input(f"\n{G}➤ Select Market (0 to Exit): {W}")
-        if choice == '0': break
-        
-        try:
-            filename = files[int(choice)-1]
-            m_name = filename.replace('.txt', '').upper()
-            data = load_data(filename)
-            conf = MARKET_CONF.get(m_name, {"mult": 1, "pos": "HEAD"})
-            
-            os.system('clear')
-            print(f"{M}◈ Market: {W}{m_name} | {Y}Loading Intelligence...{W}")
+# --- 🎨 REFINED IMAGE GENERATOR ---
+def create_refined_chart(all_data):
+    W, H = 1200, 400 + (len(all_data) * 500)
+    img = Image.new('RGB', (W, H), color='#050505') # Pure Black Base
+    draw = ImageDraw.Draw(img)
 
-            # --- SUCCESS TRACKER TABLE ---
-            print(f"\n{CY}╔{'═'*45}╗{W}")
-            print(f"{CY}║       7-DAY PERFORMANCE TRACKER           ║{W}")
-            print(f"{CY}╠{'═'*15}╦{'═'*12}╦{'═'*16}╣{W}")
-            print(f"{CY}║    DATE     ║    JODI    ║     STATUS     ║{W}")
-            print(f"{CY}╠{'═'*15}╬{'═'*12}╬{'═'*16}╣{W}")
+    def get_f(size):
+        try: return ImageFont.truetype(FONT_PATH, size)
+        except: return ImageFont.load_default()
 
-            pass_count = 0
-            recent_data = data[-7:]
-            for i in range(len(recent_data)):
-                idx = len(data) - len(recent_data) + i
-                curr = data[idx]
-                p1, p2 = data[idx-1]['val'], data[idx-2]['val']
-                otc = get_otc(p1, p2, conf['mult'], conf['pos'])
-                
-                is_pass = any(str(d) in curr['jodi'] for d in otc)
-                status = f"{G}PASS{W}" if is_pass else f"{R}FAIL{W}"
-                if is_pass: pass_count += 1
-                print(f"{CY}║{W}    {curr['date']}    {CY}║{W}    {curr['jodi']}    {CY}║{W}      {status:<12} {CY}║{W}")
+    # --- 🔒 NORMAL WATERMARK ---
+    watermark_txt = "SACHIN SOLUNKE 🙇 ANNU AI 🌹"
+    f_water = get_f(45)
+    for i in range(0, W, 450):
+        for j in range(0, H, 350):
+            draw.text((i, j), watermark_txt, fill="#151515", font=f_water)
 
-            print(f"{CY}╚{'═'*15}╩{'═'*12}╩{'═'*16}╝{W}")
+    # 1. Header (Professional Yellow)
+    draw.rectangle([0, 0, W, 220], fill="#FFCC00")
+    draw.text((W//2, 100), "ANNU AI - MASTER PREDICTION", fill="black", font=get_f(85), anchor="mm")
 
-            # --- ACCURACY BOX ---
-            prob = (pass_count / 7) * 100
-            risk_color = G if prob >= 70 else (Y if prob >= 50 else R)
-            print(f"\n{risk_color}▰▰▰ ACCURACY: {prob:.1f}% ▰▰▰{W}")
-            
-            # --- TODAY'S PREDICTION ---
-            last_j, prev_j = data[-1]['val'], data[-2]['val']
-            today_otc = get_otc(last_j, prev_j, conf['mult'], conf['pos'])
-            avg_total = sum((d['val']//10 + d['val']%10)%10 for d in data[-3:]) // 3
-            
-            print(f"\n{M}💎 TODAY'S PREDICTION:{W}")
-            print(f" {C}OTC: {G}{', '.join(map(str, today_otc))}{W}")
-            
-            generated_jodis = []
-            for o in today_otc:
-                partner = (avg_total - o) % 10
-                generated_jodis.append(f"{o}{partner}")
-                generated_jodis.append(f"{partner}{o}")
+    now = datetime.now()
+    date_txt = f"DATE: {now.strftime('%d-%m-%Y')}  |  {now.strftime('%A').upper()}  |  v5.0 PRO"
+    draw.rectangle([0, 220, W, 300], fill="#111111")
+    draw.text((W//2, 260), date_txt, fill="#FFCC00", font=get_f(45), anchor="mm")
 
-            print(f" {C}JODIS: {W}", end="")
-            for j in list(set(generated_jodis))[:4]:
-                print(f"{M}[{W}{j}{M}]{W}  ", end="")
-            
-            print(f"\n\n{G}──────────────────────────────────────────{W}")
-            input(f"{G}Press [ENTER] to return to Main Menu{W}")
-            
-        except Exception as e:
-            print(f"{R}Error: {e}{W}")
-            time.sleep(2)
-            continue
+    y = 350
+    for data in all_data:
+        c = data['color']
+        # Container
+        draw.rectangle([40, y, W-40, y+450], outline="#222222", width=3)
+        draw.rectangle([40, y, 60, y+450], fill=c) # Left accent
+
+        # 1. Name (Only Market Name, No "MARKET:")
+        draw.text((100, y+40), data['name'], fill=c, font=get_f(80))
+
+        # 2. VIP Badge Position Fix
+        txt_w = draw.textlength(data['name'], font=get_f(80))
+        badge_x = 100 + txt_w + 30
+        draw.rectangle([badge_x, y+60, badge_x+120, y+110], fill=c)
+        draw.text((badge_x+60, y+85), "VIP", fill="black", font=get_f(35), anchor="mm")
+
+        # 3. REF JODI (Clear and Visible)
+        draw.text((100, y+130), f"REF JODI: {data['ref']} (Historical Scan)", fill="#BBBBBB", font=get_f(40))
+
+        # 4. OTC Display
+        for i, num in enumerate(data['otc']):
+            cx, cy = 800 + (i * 240), y + 170
+            draw.ellipse([cx-105, cy-105, cx+105, cy+105], outline=c, width=3)
+            draw.ellipse([cx-95, cy-95, cx+95, cy+95], outline="white", width=5)
+            draw.text((cx, cy), str(num), fill="white", font=get_f(150), anchor="mm")
+
+        # 5. Jodis Section
+        draw.text((100, y+240), "TARGET JODIS ❯❯", fill="#888888", font=get_f(40))
+        for i, jodi in enumerate(data['jodis']):
+            r, col = i // 4, i % 4
+            x1, y1 = 100 + (col * 150), y + 300 + (r * 90)
+            draw.rectangle([x1, y1, x1+130, y1+75], outline="#00FF99", width=2)
+            draw.text((x1+65, y1+37), jodi, fill="#00FF99", font=get_f(55), anchor="mm")
+
+        y += 500
+
+    # 4. Footer (Correct Names & Info)
+    draw.rectangle([0, H-100, W, H], fill="#CC0000")
+    footer_txt = "OWNER: Sachin Solunke 🙇 | AI ASSISTANT: Annu AI 🌹 | ID: @Annu_AI_Bot"
+    draw.text((W//2, H-50), footer_txt, fill="white", font=get_f(40), anchor="mm")
+
+    path = "master_v5_pro.png"
+    img.save(path, quality=100)
+    return path
+
+# --- 🤖 BOT HANDLERS ---
+@bot.message_handler(commands=['start'])
+def welcome(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔥 GENERATE REFINED CHART", callback_data="MASTER"))
+    bot.reply_to(message, "नमस्ते सचिन भाई! 🌹\n\nआपके बताए गए सुधार लागू कर दिए गए हैं।", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_query(call):
+    if call.data == "MASTER":
+        bot.answer_callback_query(call.id, "Scanning Data...")
+        markets = ["SRIDEVI", "MILAN", "TIME-BAZAR", "KALYAN"]
+        all_res = [get_phase4_prediction(m) for m in markets if get_phase4_prediction(m)]
+
+        if all_res:
+            path = create_refined_chart(all_res)
+            with open(path, 'rb') as photo:
+                bot.send_photo(call.message.chat.id, photo, caption="📊 **ANNU AI - FINAL MASTER CHART**")
+            if os.path.exists(path): os.remove(path)
+        else:
+            bot.send_message(call.message.chat.id, "❌ डेटा कम है!")
 
 if __name__ == "__main__":
-    main()
+    bot.infinity_polling()
